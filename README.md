@@ -7,7 +7,7 @@
 $ pip install git+https://github.com/sandyz1000/decentlog.git
 ```
 
-Run ttyd server on Google Colab or Kaggle Notebooks
+Run Decent log client to look for output
 
 ## Getting Started
 
@@ -19,22 +19,29 @@ Decent also has a command-line script. So you can just run `decent` from command
 ```
 usage: decent [-h] --mode PUBLISHER --channel channel-name
 
-ColabShell: Run TTYD server On Colab / Kaggle Notebooks to access the GPU machine from SHELL
+DecentLog: Decentralized logging mechanism using dweetio, useful if you want to log from remote notebook 
+server to local workstation 
 
 required arguments:
-  --mode PUBLISHER 
+  --mode PUBLISHER (default)
   --channel CHANNEL-NAME dweet channel name that you want to subscribe for logging
 
-optional arguments:
-  --credential CREDENTIAL  username and password to protect your shell from unauthorized access, format username:password
 ```
 
-## Logging from Kaggle Notebook and listen to your local client
+## Logging from remote server and listen to your local client
 
 ```
-from colabshell import ColabShell
-shell = ColabShell(port=10001, username='sandip', password='pass123@', mount_drive=True)
-shell.run()
+from decentlog import init_decentlog
+
+init_decentlog("this_is_a_channel")
+print("Testing logging from decentlog !!!")
+
+```
+
+## And on your local m/c you can listen to the log message using
+
+```
+decent_cli --channel "this_is_a_channel"
 ```
 
 References: 

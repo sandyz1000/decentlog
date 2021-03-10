@@ -1,0 +1,6 @@
+.vscode
+*.pyc
+.ipynb_checkpoints
+build
+dist
+*.egg-info
