@@ -1,5 +1,7 @@
 #! /usr/bin/env python
 import argparse
+import os
+import sys
 from decentlog import listen_channel_output
 
 
@@ -21,7 +23,7 @@ def _main():
     args = parser.parse_args()
     assert args.channel, "Channel name should not be empty"
     try:
-        for res in listen_channel_output(args.channel):
+        for res in listen_channel_output(args.channel, longpoll=True):
             print(res)
     except KeyboardInterrupt:
         print("Closing .....")

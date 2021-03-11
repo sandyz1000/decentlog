@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="decentlog",
-    scripts=["decentlog/decent_cli"],
+    scripts=["decent_cli"],
     version="0.1.0",
     description="Decentralized logging using dweet.io !",
     long_description=open("README.md").read(),
