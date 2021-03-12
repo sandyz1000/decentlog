@@ -7,7 +7,7 @@ print("Testing logging from kaggle !!!")
 
 # %%
 from colabshell import ColabShell
-shell = ColabShell(port=10002, username='colabshell', password='password', mount_drive=True)
+shell = ColabShell(port=10002, username='colabshell', password='password')
 shell.run()
 
 # %%

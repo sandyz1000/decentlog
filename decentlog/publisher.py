@@ -6,7 +6,8 @@ import random_name
 import time
 from datetime import datetime
 from queue import Queue
-from .streaming import listen_for_dweets_from, poll_dweet_things_from
+from .polling import poll_dweet_things_from
+from .streaming import listen_for_dweets_from
 from concurrent.futures import ThreadPoolExecutor
 _FORMAT = '%(asctime)s:%(levelname)s:%(name)s:%(message)s'
 # _FORMAT = '%(relativeCreated)6.1f %(threadName)12s: %(levelname).1s %(module)8.8s:%(lineno)-4d %(message)s'
@@ -63,7 +64,6 @@ class dweet_publisher:
             self._buffer = ''
             self._prevtime = curtime
             
-    
     @staticmethod
     def _write_to_dweet(row, channel, dweet_timeout=0.5):
         try:
