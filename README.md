@@ -1,4 +1,5 @@
-# Decentralized logging using dweet, Logging from one server in dweet.io channel and listen on your local client  
+# Decentralized logging using dweet.
+# Logging from remote/notebook server in dweet.io channel and listen on your local client  
 
 ## Installation
 
