@@ -9,7 +9,7 @@ from queue import Queue
 from requests.exceptions import ChunkedEncodingError
 
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -47,25 +47,26 @@ def poll_dweet_things_from(channel, timeout=900, session=None, **kwargs):
     :param timeout: [description], defaults to 2000
     :type timeout: [type], optional
     """
-    _delay = 0.1
+    _delay = 1
     session = session or requests.Session()
     oldhash = _generate_hash({})
     collect_values = Queue(-1)
-    while 1:
+    while True:
         try:
             for dweet in poll(
                 dweepy.get_latest_dweet_for,
                 step=_delay,
                 args=(channel, ), kwargs={"session": session},
-                check_success=lambda new: oldhash != _generate_hash(new),
+                check_success=lambda new: oldhash != _generate_hash(new[0]),
                 timeout=timeout,
                 collect_values=collect_values,
-                ignore_exceptions=(ChunkedEncodingError, requests.ReadTimeout, requests.ConnectionError,),
-                poll_forever=True
+                ignore_exceptions=(ChunkedEncodingError, requests.ReadTimeout, requests.ConnectionError, dweepy.DweepyError),
+                # poll_forever=True
             ):
                 oldhash = _generate_hash(dweet)
                 yield dweet
         except (PollingException, ) as e:
+            logging.error("Exception occur while polling: ", str(e))
             raise e
 
 

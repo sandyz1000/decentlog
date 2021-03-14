@@ -40,6 +40,7 @@ class dweet_publisher:
     def __init__(self, logger=None, level=None, channel=None):
         self.logger = logger
         self.level = level
+        self.terminal = sys.stdout
         self.channel = channel
         self._buffer = ''
         self._prevtime = datetime.now()
@@ -59,6 +60,7 @@ class dweet_publisher:
         self._buffer += message + "\n"
         if (curtime - self._prevtime).seconds > offset:
             payload = {'msg': self._buffer}
+            self.terminal.write(self._buffer)
             future = self.executor.submit(self._write_to_dweet, payload, self.channel)
             future.result()
             self._buffer = ''

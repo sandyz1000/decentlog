@@ -1,7 +1,5 @@
 #! /usr/bin/env python
 import argparse
-import os
-import sys
 from decentlog import listen_channel_output
 
 
@@ -14,6 +12,12 @@ def _main():
         help="To start program in PUBLISHER or LISTENER mode"
     )
     parser.add_argument(
+        "--polling",
+        default=False,
+        type=bool,
+        help="Use polling instead of streaming API provided by dweet.io",
+    )
+    parser.add_argument(
         "--channel",
         type=str,
         help="Channel name where you want log to listen",
@@ -23,7 +27,7 @@ def _main():
     args = parser.parse_args()
     assert args.channel, "Channel name should not be empty"
     try:
-        for res in listen_channel_output(args.channel, longpoll=False):
+        for res in listen_channel_output(args.channel, longpoll=args.polling):
             print(res)
     except KeyboardInterrupt:
         print("Closing .....")
