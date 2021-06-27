@@ -9,6 +9,7 @@ $ pip install git+https://github.com/sandyz1000/decentlog.git
 ```
 
 ## Getting Started
+
 Decent also has a command-line script so you can simply run `decent_cli` from command line.
 
 `decent_cli -h` will give the following:
@@ -34,7 +35,6 @@ from decentlog import init_decentlog
 
 init_decentlog("this_is_a_channel")
 print("Testing logging from decentlog !!!")
-
 ```
 
 ## On your local workstation you can listen to the log message using
@@ -43,6 +43,7 @@ print("Testing logging from decentlog !!!")
 decent_cli --channel "this_is_a_channel"
 ```
 
-References: 
+###### References:
+
 https://dweet.io/
 https://github.com/paddycarey/dweepy

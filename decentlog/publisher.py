@@ -3,19 +3,20 @@ import logging
 import threading
 import dweepy
 import random_name
+from psutil import cpu_count
 import time
 from datetime import datetime
 from queue import Queue
-from .polling import poll_dweet_things_from
-from .streaming import listen_for_dweets_from
+from functools import wraps
+from kafka.consumer import KafkaConsumer
+from kafka.producer import KafkaProducer
+from kafka.errors import KafkaError
+from kafka.errors import FailedPayloadsError
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 _FORMAT = '%(asctime)s:%(levelname)s:%(name)s:%(message)s'
 # _FORMAT = '%(relativeCreated)6.1f %(threadName)12s: %(levelname).1s %(module)8.8s:%(lineno)-4d %(message)s'
 BASE_URL = 'https://dweet.io'
-
-
-class DecentLogError(Exception):
-    pass
 
 
 class read_from_q:
@@ -37,14 +38,15 @@ class read_from_q:
 
 
 class dweet_publisher:
-    def __init__(self, logger=None, level=None, channel=None):
+    def __init__(self, logger: logging.Logger = None, level: int = None,
+                 channel: str = None, max_workers: int = cpu_count(logical=False)):
         self.logger = logger
         self.level = level
         self.terminal = sys.stdout
         self.channel = channel
         self._buffer = ''
         self._prevtime = datetime.now()
-        self.executor = ThreadPoolExecutor(max_workers=4)
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
         print(f"Initialized publisher with channel: {self.channel}")
 
     def write(self, message, offset=0.1):
@@ -55,7 +57,7 @@ class dweet_publisher:
         """
         if message == '\n':
             return
-        
+
         curtime = datetime.now()
         self._buffer += message + "\n"
         if (curtime - self._prevtime).seconds > offset:
@@ -65,7 +67,7 @@ class dweet_publisher:
             future.result()
             self._buffer = ''
             self._prevtime = curtime
-            
+
     @staticmethod
     def _write_to_dweet(row, channel, dweet_timeout=0.5):
         try:
@@ -100,7 +102,7 @@ class dweet_queue_publisher:
     def write(self, message):
         if message == '\n':
             return
-        
+
         curtime = datetime.now()
         self._buffer += message
         if (curtime - self._prevtime).seconds > 1:
@@ -109,7 +111,7 @@ class dweet_queue_publisher:
             self._buffer = ''
             self._prevtime = curtime
         self._wfor_completion()
-            
+
     def send_queue(self, channel, block=False, timeout=None, dweet_timeout=0.5):
         for row in self._queue_rows():
             try:
@@ -125,22 +127,6 @@ class dweet_queue_publisher:
         self.qque.join()
 
 
-def listen_channel_output(channel, timeout=200000, longpoll=False, **kwargs):
-    """ Listen to log publish in the dweet channel from remote server
-
-    :raises Exception: [description]
-    :return: [description]
-    :rtype: [type]
-    """
-    func_dweet = poll_dweet_things_from if longpoll else listen_for_dweets_from
-    try:
-        for dweet in func_dweet(channel, timeout=timeout):
-            msg, _, _ = dweet['content'].get('msg', None), dweet['created'], dweet['thing']
-            yield msg
-    except Exception as e:
-        raise e
-
-
 def init_decentlog(channel=None):
     """ Init decentralized logging """
     try:
@@ -154,3 +140,64 @@ def init_decentlog(channel=None):
     except Exception as e:
         raise e
 
+
+class DweetHandler(logging.Handler):
+    def __init__(self, settings: defaultdict):
+        pass
+
+    def emit(self, record):
+        pass
+    
+    def close(self):
+        pass
+
+
+class KafkaHandler(logging.Handler):
+
+    def __init__(self, settings: defaultdict):
+        self.settings = settings
+        self.consumer = KafkaConsumer(
+            settings.get("KAFKA_HOSTS"),
+            group_id=settings.get('GROUP_ID', None),
+            bootstrap_servers=settings.get('BOOTSTRAP_SERVER', 'localhost:9092')
+        )
+        self.producer = KafkaProducer(
+            bootstrap_servers=settings.get('BOOTSTRAP_SERVER', 'localhost:9092')
+        )
+        self.producer.send = self.__failedpayloads_wrapper(
+            self.producer.send,
+            settings.get("KAFKA_RETRY_TIME", 5)
+        )
+        super(KafkaHandler, self).__init__()
+
+    def __failedpayloads_wrapper(self, func: typing.Callable, max_iter_times: int,
+                                 _raise: bool = False):
+        @wraps(func)
+        def _wrapper(*args):
+            count = 0
+            while count <= max_iter_times:
+                try:
+                    func(*args)
+                    break
+                except Exception as e:
+                    if _raise and not isinstance(e, FailedPayloadsError):
+                        raise e
+                    count += 1
+                    if count > max_iter_times and _raise:
+                        raise
+                    time.sleep(0.1)
+
+        return _wrapper
+
+    def emit(self, record):
+        # TODO: Check if kafka topic exists
+        buf = self.formatter.format(record)
+        if hasattr(buf, "encode"):
+            buf = buf.encode(sys.getdefaultencoding())
+        self.producer.send(self.settings.get("TOPIC"), buf)
+
+    def close(self):
+        self.acquire()
+        super(KafkaHandler, self).close()
+        self.consumer.close()
+        self.release()

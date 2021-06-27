@@ -12,9 +12,8 @@ def _main():
         help="To start program in PUBLISHER or LISTENER mode"
     )
     parser.add_argument(
-        "--polling",
-        default=False,
-        type=bool,
+        "--no_streaming",
+        action="store_true",
         help="Use polling instead of streaming API provided by dweet.io",
     )
     parser.add_argument(
@@ -27,7 +26,7 @@ def _main():
     args = parser.parse_args()
     assert args.channel, "Channel name should not be empty"
     try:
-        for res in listen_channel_output(args.channel, longpoll=args.polling):
+        for res in listen_channel_output(args.channel, longpoll=args.no_streaming):
             print(res)
     except KeyboardInterrupt:
         print("Closing .....")

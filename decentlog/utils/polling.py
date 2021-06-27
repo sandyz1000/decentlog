@@ -1,16 +1,9 @@
-import dweepy
 import time
-import requests
 import json
 import hashlib
 import typing
-import logging
 from queue import Queue
-from requests.exceptions import ChunkedEncodingError
-
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from collections import defaultdict
 
 
 class PollingException(Exception):
@@ -37,37 +30,6 @@ def _generate_hash(dictionary: typing.Dict[str, typing.Any]) -> str:
     encoded = json.dumps(dictionary, sort_keys=True).encode()
     dhash.update(encoded)
     return dhash.hexdigest()
-
-
-def poll_dweet_things_from(channel, timeout=900, session=None, **kwargs):
-    """
-    Poll dweet API to look for message
-    :param channel: Things/Channel name
-    :type channel: str
-    :param timeout: [description], defaults to 2000
-    :type timeout: [type], optional
-    """
-    _delay = 1
-    session = session or requests.Session()
-    oldhash = _generate_hash({})
-    collect_values = Queue(-1)
-    while True:
-        try:
-            for dweet in poll(
-                dweepy.get_latest_dweet_for,
-                step=_delay,
-                args=(channel, ), kwargs={"session": session},
-                check_success=lambda new: oldhash != _generate_hash(new[0]),
-                timeout=timeout,
-                collect_values=collect_values,
-                ignore_exceptions=(ChunkedEncodingError, requests.ReadTimeout, requests.ConnectionError, dweepy.DweepyError),
-                # poll_forever=True
-            ):
-                oldhash = _generate_hash(dweet)
-                yield dweet
-        except (PollingException, ) as e:
-            logging.error("Exception occur while polling: ", str(e))
-            raise e
 
 
 def step_constant(step):
@@ -133,7 +95,7 @@ def poll(target, step, args=(), kwargs=None, timeout=None, max_tries=None, check
     assert not ((timeout is not None or max_tries is not None) and poll_forever), \
         'You cannot specify both the option to poll_forever and max_tries/timeout.'
 
-    kwargs = kwargs or dict()
+    kwargs = kwargs or defaultdict()
     values = collect_values or Queue()
 
     max_time = time.time() + timeout if timeout else None
