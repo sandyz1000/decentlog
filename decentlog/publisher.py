@@ -2,54 +2,68 @@ import sys
 import logging
 import threading
 import dweepy
+import typing
 import random_name
 from psutil import cpu_count
 import time
 from datetime import datetime
 from queue import Queue
 from functools import wraps
-from kafka.consumer import KafkaConsumer
 from kafka.producer import KafkaProducer
 from kafka.errors import KafkaError
 from kafka.errors import FailedPayloadsError
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-_FORMAT = '%(asctime)s:%(levelname)s:%(name)s:%(message)s'
-# _FORMAT = '%(relativeCreated)6.1f %(threadName)12s: %(levelname).1s %(module)8.8s:%(lineno)-4d %(message)s'
+from abc import ABCMeta, abstractmethod
+
 BASE_URL = 'https://dweet.io'
 
 
-class read_from_q:
-    def __init__(self, q, block=False, timeout=None):
-        """
-         :param Queue.Queue q:
-         :param bool block:
-         :param timeout:
-        """
-        self.q = q
-        self.block = block
-        self.timeout = timeout
+class BaseHandler(ABCMeta):
+    """ Base Handler
+    """
 
-    def __enter__(self):
-        return self.q.get(self.block, self.timeout)
+    @abstractmethod
+    def emit(self):
+        """ Need to be implemented in child class"""
+        ...
 
-    def __exit__(self, _type, _value, _traceback):
-        self.q.task_done()
+    @abstractmethod
+    def close(self):
+        """ Need to be implemented in child class"""
+        ...
 
 
-class dweet_publisher:
-    def __init__(self, logger: logging.Logger = None, level: int = None,
-                 channel: str = None, max_workers: int = cpu_count(logical=False)):
-        self.logger = logger
-        self.level = level
+class DweetPublisher(logging.Handler, BaseHandler):
+    """ Dweet Log Handler that will publish message to dweet channel
+    """
+
+    def __init__(self, settings: defaultdict):
+        self.settings = settings
+        self.level = settings.get('level', None)
         self.terminal = sys.stdout
-        self.channel = channel
+        self.channel = settings.get('channel', None)
         self._buffer = ''
         self._prevtime = datetime.now()
-        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.executor = ThreadPoolExecutor(max_workers=settings.get('max_workers'))
         print(f"Initialized publisher with channel: {self.channel}")
 
-    def write(self, message, offset=0.1):
+        def _submit_task(payload):
+            self.terminal.write(self._buffer)
+            future = self.executor.submit(self._write_to_dweet, payload, self.channel)
+            future.result()
+
+        self.submit_task = _submit_task
+        self.settings = settings
+
+    def _write_to_dweet(self, row, channel, dweet_timeout=0.5):
+        try:
+            dweepy.dweet_for(channel, row)
+            time.sleep(dweet_timeout)
+        except dweepy.DweepyError:
+            pass
+
+    def emit(self, message: str, offset: float = 0.1):
         """ Write log message to dweet channel
 
         :param msg: [description]
@@ -62,105 +76,102 @@ class dweet_publisher:
         self._buffer += message + "\n"
         if (curtime - self._prevtime).seconds > offset:
             payload = {'msg': self._buffer}
-            self.terminal.write(self._buffer)
-            future = self.executor.submit(self._write_to_dweet, payload, self.channel)
-            future.result()
+            self.submit_task(payload)
             self._buffer = ''
             self._prevtime = curtime
 
-    @staticmethod
-    def _write_to_dweet(row, channel, dweet_timeout=0.5):
-        try:
-            dweepy.dweet_for(channel, row)
-            time.sleep(dweet_timeout)
-        except dweepy.DweepyError:
-            pass
-
-    def flush(self):
-        pass
+    def close(self):
+        self.executor.shutdown()
 
 
-class dweet_queue_publisher:
-    def __init__(self, channel=None):
-        self.channel = channel
+class DweetQueuePublisher(DweetPublisher):
+    def __init__(self, settings: defaultdict):
+        self.settings = settings
+        self.level = settings.get('level', None)
+        self.terminal = sys.stdout
+        self.channel = settings.get('channel', None)
         self._buffer = ''
         self._prevtime = datetime.now()
-        threading.Thread(target=self.send_queue, args=(self.channel), kwargs={}, daemon=True).start()
+        t = threading.Thread(target=self.send_queue, args=(self.channel), kwargs={}, daemon=True)
+        t.start()
         self.qque = Queue(-1)
+
+        class read_from_q:
+            def __init__(self, q, block=False, timeout=None):
+                """
+                :param Queue.Queue q:
+                :param bool block:
+                :param timeout:
+                """
+                self.q = q
+                self.block = block
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self.q.get(self.block, self.timeout)
+
+            def __exit__(self, _type, _value, _traceback):
+                self.q.task_done()
+        self.__read_from_q = read_from_q
         print(f"Initialized publisher with channel: {self.channel}")
+        self.submit_task = (lambda payload: self.qque.put_nowait(payload))
 
-    def _queue_rows(self, block=False, timeout=None):
-        """
-        :param Queue.Queue q:
-        :param bool block:
-        :param int timeout:
-        """
-        while not self.qque.empty():
-            with read_from_q(self.qque, block, timeout) as row:
-                yield row
-
-    def write(self, message):
-        if message == '\n':
-            return
-
-        curtime = datetime.now()
-        self._buffer += message
-        if (curtime - self._prevtime).seconds > 1:
-            payload = {'msg': self._buffer}
-            self.qque.put_nowait(payload)
-            self._buffer = ''
-            self._prevtime = curtime
-        self._wfor_completion()
-
-    def send_queue(self, channel, block=False, timeout=None, dweet_timeout=0.5):
-        for row in self._queue_rows():
+    def send_queue(self, channel, block=True, timeout=None, dweet_timeout=0.5) -> bool:
+        # TODO: Fix this code
+        if not block:
             try:
-                dweepy.dweet_for(channel, row)
+                for row in self._queue_rows():
+                    dweepy.dweet_for(channel, row)
+                    time.sleep(dweet_timeout)
+            except (dweepy.DweepyError, StopIteration):
+                pass
+        else:
+            # Execute below code when block commit is True
+            items, count = [], 0
+            while 1:
+                try:
+                    row = next(self._queue_rows())
+                    items.append(row)
+                    count += 1
+                except StopIteration:
+                    break
+            
+            try:
+                # TODO: Send dweet in batch
                 time.sleep(dweet_timeout)
             except dweepy.DweepyError:
                 pass
+        return True
 
-    def flush(self):
-        pass
+    def _queue_rows(self, block=False, timeout=None):
+        """
+        :param bool block:
+        :param int timeout:
+        """
+        if self.qque.empty():
+            raise StopIteration("Queue is empty")
+        
+        while not self.qque.empty():
+            with self.__read_from_q(self.qque, block, timeout) as row:
+                yield row
 
-    def _wfor_completion(self):
+    def emit(self, message: str, offset: float):
+        super().emit(message, offset=offset)
+        self.__wfor_completion()
+
+    def __wfor_completion(self):
         self.qque.join()
 
-
-def init_decentlog(channel=None):
-    """ Init decentralized logging """
-    try:
-        channel = random_name.generate_name() if channel is None else channel
-        logging.basicConfig(level=logging.DEBUG, format=_FORMAT, filemode='a')
-        logger = dweet_publisher(logger=logging.getLogger('STDOUT'), level=logging.INFO, channel=channel)
-        sys.stdout = logger
-        sys.stderr = logger
-        return logger
-
-    except Exception as e:
-        raise e
-
-
-class DweetHandler(logging.Handler):
-    def __init__(self, settings: defaultdict):
-        pass
-
-    def emit(self, record):
-        pass
-    
     def close(self):
         pass
 
 
-class KafkaHandler(logging.Handler):
+class KafkaPublisher(logging.Handler, BaseHandler):
 
-    def __init__(self, settings: defaultdict):
+    def __init__(self, settings: typing.Dict[str, typing.Any],
+                 level: int, *args, **kwargs):
+        super(KafkaPublisher, self).__init__(level=level)
         self.settings = settings
-        self.consumer = KafkaConsumer(
-            settings.get("KAFKA_HOSTS"),
-            group_id=settings.get('GROUP_ID', None),
-            bootstrap_servers=settings.get('BOOTSTRAP_SERVER', 'localhost:9092')
-        )
         self.producer = KafkaProducer(
             bootstrap_servers=settings.get('BOOTSTRAP_SERVER', 'localhost:9092')
         )
@@ -168,7 +179,6 @@ class KafkaHandler(logging.Handler):
             self.producer.send,
             settings.get("KAFKA_RETRY_TIME", 5)
         )
-        super(KafkaHandler, self).__init__()
 
     def __failedpayloads_wrapper(self, func: typing.Callable, max_iter_times: int,
                                  _raise: bool = False):
@@ -190,7 +200,6 @@ class KafkaHandler(logging.Handler):
         return _wrapper
 
     def emit(self, record):
-        # TODO: Check if kafka topic exists
         buf = self.formatter.format(record)
         if hasattr(buf, "encode"):
             buf = buf.encode(sys.getdefaultencoding())
@@ -198,6 +207,5 @@ class KafkaHandler(logging.Handler):
 
     def close(self):
         self.acquire()
-        super(KafkaHandler, self).close()
         self.consumer.close()
         self.release()
