@@ -16,8 +16,6 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from abc import ABCMeta, abstractmethod
 
-BASE_URL = 'https://dweet.io'
-
 
 class BaseHandler(ABCMeta):
     """ Base Handler
@@ -39,22 +37,29 @@ class DweetPublisher(logging.Handler, BaseHandler):
     """
 
     def __init__(self, settings: defaultdict):
+        super().__init__()
         self.settings = settings
-        self.level = settings.get('level', None)
-        self.terminal = sys.stdout
-        self.channel = settings.get('channel', None)
-        self._buffer = ''
-        self._prevtime = datetime.now()
+        if 'DWEET' not in settings:
+            raise AttributeError("Key with named 'DWEET' not found")
+
+        self.init_var()
         self.executor = ThreadPoolExecutor(max_workers=settings.get('max_workers'))
         print(f"Initialized publisher with channel: {self.channel}")
 
-        def _submit_task(payload):
-            self.terminal.write(self._buffer)
-            future = self.executor.submit(self._write_to_dweet, payload, self.channel)
-            future.result()
+    def init_var(self):
+        self.level = self.settings.get('log_level', 0)
+        super().__init__(level=self.level)
+        self.terminal = sys.stdout
+        self.channel = self.settings.get('channel', None)
+        if not self.channel:
+            self.channel = random_name.generate_name()
+        self._buffer = ''
+        self._prevtime = datetime.now()
 
-        self.submit_task = _submit_task
-        self.settings = settings
+    def __submit_task(self, payload):
+        self.terminal.write(self._buffer)
+        future = self.executor.submit(self._write_to_dweet, payload, self.channel)
+        future.result()
 
     def _write_to_dweet(self, row, channel, dweet_timeout=0.5):
         try:
@@ -76,7 +81,7 @@ class DweetPublisher(logging.Handler, BaseHandler):
         self._buffer += message + "\n"
         if (curtime - self._prevtime).seconds > offset:
             payload = {'msg': self._buffer}
-            self.submit_task(payload)
+            self.__submit_task(payload)
             self._buffer = ''
             self._prevtime = curtime
 
@@ -87,11 +92,9 @@ class DweetPublisher(logging.Handler, BaseHandler):
 class DweetQueuePublisher(DweetPublisher):
     def __init__(self, settings: defaultdict):
         self.settings = settings
-        self.level = settings.get('level', None)
-        self.terminal = sys.stdout
-        self.channel = settings.get('channel', None)
-        self._buffer = ''
-        self._prevtime = datetime.now()
+        if 'DWEET' not in settings:
+            raise AttributeError("Key with named 'DWEET' not found")
+        super(DweetQueuePublisher, self).init_var()
         t = threading.Thread(target=self.send_queue, args=(self.channel), kwargs={}, daemon=True)
         t.start()
         self.qque = Queue(-1)
@@ -112,9 +115,10 @@ class DweetQueuePublisher(DweetPublisher):
 
             def __exit__(self, _type, _value, _traceback):
                 self.q.task_done()
+
         self.__read_from_q = read_from_q
         print(f"Initialized publisher with channel: {self.channel}")
-        self.submit_task = (lambda payload: self.qque.put_nowait(payload))
+        self.__submit_task = (lambda payload: self.qque.put_nowait(payload))
 
     def send_queue(self, channel, block=True, timeout=None, dweet_timeout=0.5) -> bool:
         # TODO: Fix this code
@@ -135,7 +139,7 @@ class DweetQueuePublisher(DweetPublisher):
                     count += 1
                 except StopIteration:
                     break
-            
+
             try:
                 # TODO: Send dweet in batch
                 time.sleep(dweet_timeout)
@@ -150,7 +154,7 @@ class DweetQueuePublisher(DweetPublisher):
         """
         if self.qque.empty():
             raise StopIteration("Queue is empty")
-        
+
         while not self.qque.empty():
             with self.__read_from_q(self.qque, block, timeout) as row:
                 yield row
@@ -168,17 +172,19 @@ class DweetQueuePublisher(DweetPublisher):
 
 class KafkaPublisher(logging.Handler, BaseHandler):
 
-    def __init__(self, settings: typing.Dict[str, typing.Any],
-                 level: int, *args, **kwargs):
-        super(KafkaPublisher, self).__init__(level=level)
+    def __init__(self, settings: typing.Dict[str, typing.Any]):
+        if 'KAFKA' not in settings:
+            raise AttributeError("Key with named 'KAFKA' not found")
+        self.level = self.settings.log_level
+        super(KafkaPublisher, self).__init__(level=self.level)
         self.settings = settings
+        kafka_cfg = settings['KAFKA']
         self.producer = KafkaProducer(
-            bootstrap_servers=settings.get('BOOTSTRAP_SERVER', 'localhost:9092')
+            bootstrap_servers=kafka_cfg.get('BOOTSTRAP_SERVER', 'localhost:9092')
         )
-        self.producer.send = self.__failedpayloads_wrapper(
-            self.producer.send,
-            settings.get("KAFKA_RETRY_TIME", 5)
-        )
+        self.producer.send = self.__failedpayloads_wrapper(self.producer.send,
+                                                           kafka_cfg["KAFKA_RETRY_TIME"])
+        self.topic = kafka_cfg['TOPIC']
 
     def __failedpayloads_wrapper(self, func: typing.Callable, max_iter_times: int,
                                  _raise: bool = False):
@@ -199,11 +205,11 @@ class KafkaPublisher(logging.Handler, BaseHandler):
 
         return _wrapper
 
-    def emit(self, record):
+    def emit(self, record: typing.AnyStr):
         buf = self.formatter.format(record)
         if hasattr(buf, "encode"):
             buf = buf.encode(sys.getdefaultencoding())
-        self.producer.send(self.settings.get("TOPIC"), buf)
+        self.producer.send(self.topic, buf)
 
     def close(self):
         self.acquire()

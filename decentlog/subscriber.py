@@ -13,7 +13,7 @@ from abc import ABCMeta, abstractmethod
 logger = logging.getLogger("__main__")
 
 # base url for all requests
-BASE_URL = "dweet.io"
+
 # _SESSION_TYPE = typing.Union[requests.Session, typing.Any]
 _SETTING_TYPE = typing.Dict[typing.AnyStr, typing.Any]
 
@@ -39,13 +39,14 @@ class BaseListener(ABCMeta):
 class KafkaListener(BaseListener):
     def __init__(self, settings: _SETTING_TYPE):
         super(KafkaListener, self).__init__(settings)
+        self.settings = settings
         if 'KAFKA' not in settings:
             raise AttributeError("Key with named 'KAFKA' not found")
-        kafka_cfg = settings.get('KAFKA')
+        kafka_cfg = self.settings['KAFKA']
         self.consumer = KafkaConsumer(
             kafka_cfg['HOSTS'],
             group_id=kafka_cfg['GROUP_ID'],
-            request_timeout_ms=kafka_cfg.get('timeout', 200000),
+            request_timeout_ms=kafka_cfg.get('TIMEOUT', 200000),
             bootstrap_servers=kafka_cfg.get('BOOTSTRAP_SERVER', 'localhost:9092'),
             value_deserializer=lambda m: json.loads(m.decode('ascii')),
         )
@@ -67,11 +68,12 @@ class DweetHttpListener(BaseListener):
         if 'DWEET' not in settings:
             raise AttributeError("Key with named 'DWEET' not found")
         dweet_cfg = settings.get('DWEEET')
-        self.conn = http.client.HTTPSConnection(BASE_URL, timeout=dweet_cfg['timeout'])
-        self.channel = dweet_cfg['thing_name']
+        self.BASE_URL = dweet_cfg['BASE_URL']
+        self.conn = http.client.HTTPSConnection(self.BASE_URL, timeout=dweet_cfg['timeout'])
+        self.channel = dweet_cfg['THINGS_NAME']
         self.uri = "/listen/for/dweets/from/{0}".format(self.channel)
         self.headers = {"Content-type": "application/json", "Connection": "keep-alive"}
-        self.timeout = dweet_cfg['timeout']
+        self.timeout = dweet_cfg['TIMEOUT']
 
     def parse_http_response(self, response: http.client.HTTPResponse) -> typing.Iterator:
         """Yields dweets as received from dweet.io's streaming API"""

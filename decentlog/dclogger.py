@@ -10,7 +10,8 @@ from functools import wraps
 from portalocker import lock, unlock, LOCK_EX
 from concurrent_log_handler import ConcurrentRotatingFileHandler, NullLogRecord
 from pythonjsonlogger import jsonlogger
-from .settings_cfg import SettingsConfigurator
+import importlib
+from .publisher import DweetPublisher, DweetQueuePublisher, KafkaPublisher
 
 
 class FixedConcurrentRotatingFileHandler(ConcurrentRotatingFileHandler):
@@ -66,7 +67,8 @@ class LogObject(metaclass=singleton):
         self.json = json
         self.name = name
         self.format_string = format
-
+        self.getRootLogger = (lambda self: self.root)
+        
     def __wrapper__(self, func: typing.Callable, item):
         @wraps(func)
         def _wraps(*args, **kwargs):
@@ -108,41 +110,68 @@ class LogObject(metaclass=singleton):
         return my_copy
 
 
+class SingleLevelFilter(logging.Filter):
+    def __init__(self, passlevel, reject):
+        self.passlevel = passlevel
+        self.reject = reject
+
+    def filter(self, record):
+        if self.reject:
+            return (record.levelno != self.passlevel)
+        else:
+            return (record.levelno == self.passlevel)
+
+
 class DecentralizedLogger:
     """ Decentralized logger class which on set return the instance of logger
     """
     name = "root"
 
-    setting_wrapper = SettingsConfigurator()
+    # setting_wrapper = SettingsConfigurator()
 
     def __init__(self, settings: typing.Union[typing.Dict] = None):
-        if isinstance(settings, dict):
-            self.settings = settings
-        else:
-            import importlib
-            default_settings = importlib.import_module("default_settings.py")
-            self.settings = self.setting_wrapper.load(settings, default_settings)
+        self.settings = settings
+        self.my_dir = self.settings.get('log_dir', 'logs')
+        os.makedirs(self.my_dir, exist_ok=True)
 
-    def __resolve_handler(self, *args, **kwargs):
-        my_dir = self.settings.get('LOG_DIR', 'logs')
-        my_output = self.settings.get('LOG_STDOUT', False)
+    def _set_stream_handler(self, stdout_type, loginfo=logging.INFO, reject=True):
+        h1 = logging.StreamHandler(stdout_type)
+        f1 = SingleLevelFilter(loginfo, reject)
+        h1.addFilter(f1)
+        self.logger.set_handler(h1)
+
+    def __resolve_handler(self) -> None:
+        if self.settings['DWEET_HANDLER']:
+            module, clsname = self.settings['DWEET_HANDLER'].rsplit(".", 1)
+            _cls = getattr(importlib.import_module(module), clsname)
+            self.logger.set_handler(_cls(self.settings))
+
+        if self.settings['KAFKA_HANDLER']:
+            module, clsname = self.settings['KAFKA_HANDLER'].rsplit(".", 1)
+            _cls = getattr(importlib.import_module(module), clsname)
+            self.logger.set_handler(_cls(self.settings))
+
+        if self.settings['STREAM_HANDLER']:
+            module, clsname = self.settings['STREAM_HANDLER'].rsplit(".", 1)
+            _cls = getattr(importlib.import_module(module), clsname)
+            self._set_stream_handler(sys.stdout, loginfo=logging.INFO, reject=False)
+            self._set_stream_handler(sys.stderr, loginfo=logging.INFO, reject=True)
+            
+        my_bytes = self.settings['LOG_MAX_BYTES']
         my_bytes = self.settings.get('LOG_MAX_BYTES', '10MB')
         my_file = "%s.log" % self.name
         my_backups = self.settings.get('LOG_BACKUPS', 5)
-        to_kafka = self.settings.get("TO_KAFKA", False)
-        to_dweet = self.settings.get("TO_DWEET", False)
-        # self.logger.set_handler(KafkaHandler(self.settings))
-        # self.logger.set_handler(KafkaHandler(self.settings))
-        self.logger.set_handler(logging.StreamHandler(sys.stdout))
+
         # - Initialize decent logger for bypass stdout and stderr i.e. print statement to log
-        sys.stdout = StreamToLogger(logger=self.logger, log_level=logging.INFO)
-        sys.stderr = StreamToLogger(logger=self.logger, log_level=logging.ERROR)
-        os.makedirs(my_dir, exist_ok=True)
+        if self.settings['stream_to_logger']:
+            sys.stdout = StreamToLogger(logger=self.logger, log_level=logging.INFO)
+            sys.stderr = StreamToLogger(logger=self.logger, log_level=logging.ERROR)
+
         handler = FixedConcurrentRotatingFileHandler if os.name == "nt" else \
             ConcurrentRotatingFileHandler
-        handler(os.path.join(my_dir, my_file), backupCount=my_backups, maxBytes=my_bytes)
+        handler(os.path.join(self.my_dir, my_file), backupCount=my_backups, maxBytes=my_bytes)
 
-    def set_logger(self, logger=None):
+    def set_logger(self, logger=None) -> LogObject:
         """Initialize to set logger to global scope
 
         :param logger: [description], defaults to None
@@ -179,7 +208,7 @@ class StreamToLogger(io.TextIOWrapper):
         write_through=False,
     ):
         super(StreamToLogger, self).__init__(
-            buffer, encoding=encoding, errors=errors, 
+            buffer, encoding=encoding, errors=errors,
             newline=newline, line_buffering=line_buffering, write_through=write_through
         )
         self.logger = logger
