@@ -17,22 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from abc import ABCMeta, abstractmethod
 
 
-class BaseHandler(ABCMeta):
-    """ Base Handler
-    """
-
-    @abstractmethod
-    def emit(self):
-        """ Need to be implemented in child class"""
-        ...
-
-    @abstractmethod
-    def close(self):
-        """ Need to be implemented in child class"""
-        ...
-
-
-class DweetPublisher(logging.Handler, BaseHandler):
+class DweetPublisher(logging.Handler):
     """ Dweet Log Handler that will publish message to dweet channel
     """
 
@@ -170,7 +155,7 @@ class DweetQueuePublisher(DweetPublisher):
         pass
 
 
-class KafkaPublisher(logging.Handler, BaseHandler):
+class KafkaPublisher(logging.Handler):
 
     def __init__(self, settings: typing.Dict[str, typing.Any]):
         if 'KAFKA' not in settings:
@@ -215,3 +200,90 @@ class KafkaPublisher(logging.Handler, BaseHandler):
         self.acquire()
         self.consumer.close()
         self.release()
+
+
+class StreamPublisher(logging.Handler):
+    """
+    A publisher class which writes logging records, appropriately formatted,
+    to a stream. Note that this class does not close the stream, as
+    sys.stdout or sys.stderr may be used.
+    """
+
+    terminator = '\n'
+
+    def __init__(self, dc_stdout=None, dc_stderr=None, log_level=None):
+        """
+        Initialize the handler with stdout and stderr.
+        If stream is not specified, default sys.stderr and sys.stdout is used.
+        """
+        super(StreamPublisher, self).__init__(level=log_level)
+        self.level = log_level if log_level else logging.DEBUG
+        self.stderr = sys.stderr if not dc_stderr else dc_stderr
+        self.stdout = sys.stdout if not dc_stdout else dc_stdout
+
+    def get_stream(self, level):
+        return self.stderr if level < max(self.min_level, logging.WARNING) else self.stdout
+        
+    def flush(self, stream):
+        """ Flushes the stream.
+        """
+        self.acquire()
+        try:
+            if stream and hasattr(stream, "flush"):
+                stream.flush()
+        finally:
+            self.release()
+
+    def emit(self, record):
+        """
+        Emit a record.
+
+        If a formatter is specified, it is used to format the record.
+        The record is then written to the stream with a trailing newline.  If
+        exception information is present, it is formatted using
+        traceback.print_exception and appended to the stream.  If the stream
+        has an 'encoding' attribute, it is used to determine how to do the
+        output to the stream.
+        """
+        try:
+            msg = self.format(record)
+            stream = self.get_stream(record.level)
+            # issue 35046: merged two stream.writes into one.
+            stream.write(msg + self.terminator)
+            self.flush(stream)
+        except RecursionError:  # See issue 36272
+            raise
+        except Exception:
+            self.handleError(record)
+
+    def setStream(self, _stdout=None, _stderr=None):
+        """
+        Sets the StreamHandler's stream to the specified value,
+        if it is different.
+
+        Returns the old stream, if the stream was changed, or None
+        if it wasn't.
+        """
+        if _stderr is self.stderr and _stdout is self.stdout:
+            return self.stdout, self.stderr
+        
+        prev_stdout, prev_stderr = self.stdout, self.stderr
+        self.acquire()
+        try:
+            self.flush(self.stdout)
+            self.flush(self.stderr)
+            self.stdout, self.stderr = _stdout, _stderr
+        finally:
+            self.release()
+        return prev_stdout, prev_stderr
+
+    def __repr__(self):
+        stream = self.get_stream(self.level)
+        level = logging.getLevelName(self.level)
+        name = getattr(stream, 'name', '')
+        #  bpo-36015: name can be an int
+        name = str(name)
+        if name:
+            name += ' '
+        return '<%s %s(%s)>' % (self.__class__.__name__, name, level)
+

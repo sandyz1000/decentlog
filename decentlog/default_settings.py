@@ -1,27 +1,28 @@
 from easydict import EasyDict
 
-_c = EasyDict()
-
 DEFAULT_TIMEOUT = 2000000
 
 
-_c.log_level = 'DEBUG'
-_c.log_dir = "logs"
-_c.DWEET_HANDLER = 'decentlog.publisher.DweetPublisher'
-_c.KAFKA_HANDLER = 'decentlog.publisher.KafkaPublisher'
-_c.STREAM_HANDLER = 'logging.StreamHandler'
-
-_c.stream_to_logger = True
-_c.output_to_json = True
+LOG_LEVEL = 'DEBUG'
+LOG_DIR = "logs"
+LOG_HANDLER = EasyDict(
+    to_dweet=True, to_kafka=True,
+    to_stream=True, to_file=True,
+)
 
 # General log configuration
-_c.LOG_MAX_BYTES = 1024 * 1024 * 10
-_c.LOG_BACKUPS = 5
-_c.LOG_FORMAT = '%(asctime)s:%(levelname)s:%(name)s:%(message)s'
-# c.LOG_FORMAT = '%(relativeCreated)6.1f %(threadName)12s: %(levelname).1s %(module)8.8s:%(lineno)-4d %(message)s'
+LOG_FORMATTER = EasyDict(
+    to_json=True,
+    format='%(asctime)s:%(levelname)s:%(name)s:%(message)s',
+    # format='%(relativeCreated)6.1f %(threadName)12s: %(levelname).1s %(module)8.8s:%(lineno)-4d %(message)s',
+    log_max_bytes=1024 * 1024 * 10,
+    log_backups=5,
+    relay_stdout=True,
+)
+
 
 # Kafka Configuration
-_c.KAFKA = EasyDict(
+KAFKA = EasyDict(
     BOOTSTRAP_SERVER="localhost:9094",
     TIMEOUT=DEFAULT_TIMEOUT,
     GROUP_ID=None,
@@ -31,11 +32,8 @@ _c.KAFKA = EasyDict(
 )
 
 # Dweet Configuration
-_c.DWEET = EasyDict(
+DWEET = EasyDict(
     BASE_URL="dweet.io",
     THINGS_NAME='',
     TIMEOUT=DEFAULT_TIMEOUT,
 )
-
-
-settings = _c

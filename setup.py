@@ -1,10 +1,18 @@
 from setuptools import setup, find_packages
 
+requirements = [
+    "dweepy",
+    "random_name",
+    "easydict",
+    "kafka-python",
+    "concurrent_log_handler",
+    "python-json-logger",
+]
 setup(
     name="decentlog",
-    scripts=["decent_cli"],
+    scripts=["scripts/decent_cli.py"],
     version="0.1.0",
-    description="Decentralized logging using dweet.io !",
+    description="Decentralized logging, log anywhere and view in your console",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     author="Sandip Dey",
@@ -13,7 +21,7 @@ setup(
     license="MIT License",
     packages=find_packages(),
     include_package_data=True,
-    install_requires=["dweepy", "random_name"],
+    install_requires=requirements,
     platforms=["linux", "unix"],
     python_requires=">3.5.2",
 )

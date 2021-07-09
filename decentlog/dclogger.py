@@ -7,11 +7,10 @@ import os
 import sys
 import typing
 from functools import wraps
+from abc import ABCMeta, abstractmethod
 from portalocker import lock, unlock, LOCK_EX
 from concurrent_log_handler import ConcurrentRotatingFileHandler, NullLogRecord
 from pythonjsonlogger import jsonlogger
-import importlib
-from .publisher import DweetPublisher, DweetQueuePublisher, KafkaPublisher
 
 
 class FixedConcurrentRotatingFileHandler(ConcurrentRotatingFileHandler):
@@ -57,7 +56,7 @@ class LogObject(metaclass=singleton):
     """ This class will the add functionality to log.Handler instance"""
 
     def __init__(self, json=False, name='scrapy-cluster', level='INFO',
-                 format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
+                 file_format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
                  propagate=False):
         self.logger = logging.getLogger(name)
         root = logging.getLogger()
@@ -66,7 +65,7 @@ class LogObject(metaclass=singleton):
         self.logger.propagate = propagate
         self.json = json
         self.name = name
-        self.format_string = format
+        self.format_string = file_format
         self.getRootLogger = (lambda self: self.root)
         
     def __wrapper__(self, func: typing.Callable, item):
@@ -110,66 +109,25 @@ class LogObject(metaclass=singleton):
         return my_copy
 
 
-class SingleLevelFilter(logging.Filter):
-    def __init__(self, passlevel, reject):
-        self.passlevel = passlevel
-        self.reject = reject
-
-    def filter(self, record):
-        if self.reject:
-            return (record.levelno != self.passlevel)
-        else:
-            return (record.levelno == self.passlevel)
-
-
-class DecentralizedLogger:
-    """ Decentralized logger class which on set return the instance of logger
-    """
+class BaseDecentLogger(ABCMeta):
+    """ Decentralized logger base class that return the instance of logger, however it cannot be
+    instatiated. Implementment child class to complete the functionality """
     name = "root"
-
-    # setting_wrapper = SettingsConfigurator()
 
     def __init__(self, settings: typing.Union[typing.Dict] = None):
         self.settings = settings
         self.my_dir = self.settings.get('log_dir', 'logs')
         os.makedirs(self.my_dir, exist_ok=True)
 
-    def _set_stream_handler(self, stdout_type, loginfo=logging.INFO, reject=True):
-        h1 = logging.StreamHandler(stdout_type)
-        f1 = SingleLevelFilter(loginfo, reject)
-        h1.addFilter(f1)
-        self.logger.set_handler(h1)
+    @abstractmethod
+    def resolve_handler(self) -> None:
+        """" To be implemented by child class """
 
-    def __resolve_handler(self) -> None:
-        if self.settings['DWEET_HANDLER']:
-            module, clsname = self.settings['DWEET_HANDLER'].rsplit(".", 1)
-            _cls = getattr(importlib.import_module(module), clsname)
-            self.logger.set_handler(_cls(self.settings))
-
-        if self.settings['KAFKA_HANDLER']:
-            module, clsname = self.settings['KAFKA_HANDLER'].rsplit(".", 1)
-            _cls = getattr(importlib.import_module(module), clsname)
-            self.logger.set_handler(_cls(self.settings))
-
-        if self.settings['STREAM_HANDLER']:
-            module, clsname = self.settings['STREAM_HANDLER'].rsplit(".", 1)
-            _cls = getattr(importlib.import_module(module), clsname)
-            self._set_stream_handler(sys.stdout, loginfo=logging.INFO, reject=False)
-            self._set_stream_handler(sys.stderr, loginfo=logging.INFO, reject=True)
-            
-        my_bytes = self.settings['LOG_MAX_BYTES']
-        my_bytes = self.settings.get('LOG_MAX_BYTES', '10MB')
-        my_file = "%s.log" % self.name
-        my_backups = self.settings.get('LOG_BACKUPS', 5)
-
-        # - Initialize decent logger for bypass stdout and stderr i.e. print statement to log
-        if self.settings['stream_to_logger']:
-            sys.stdout = StreamToLogger(logger=self.logger, log_level=logging.INFO)
-            sys.stderr = StreamToLogger(logger=self.logger, log_level=logging.ERROR)
-
-        handler = FixedConcurrentRotatingFileHandler if os.name == "nt" else \
-            ConcurrentRotatingFileHandler
-        handler(os.path.join(self.my_dir, my_file), backupCount=my_backups, maxBytes=my_bytes)
+    def relay_stdoutput(self):
+        # - Initialize decent logger for relay log to stdout and stderr
+        # i.e. print statement to log
+        sys.stdout = StreamToLogger(logger=self.logger, log_level=logging.INFO)
+        sys.stderr = StreamToLogger(logger=self.logger, log_level=logging.ERROR)
 
     def set_logger(self, logger=None) -> LogObject:
         """Initialize to set logger to global scope
@@ -181,13 +139,14 @@ class DecentralizedLogger:
         """
         if logger:
             self.logger = logger
-            return None
-        my_level = self.settings.get('LOG_LEVEL', 'INFO')
+            return self.logger
+        my_level = self.settings['LOG_FORMATTER'].get('LOG_LEVEL', 'INFO')
         my_name = self.name
-        my_json = self.settings.get('LOG_JSON', True)
-
+        my_json = self.settings['LOG_FORMATTER'].get('LOG_JSON', True)
+        if self.settings['LOG_FORMATTER'].get('relay_stdout', False):
+            self.relay_stdoutput()
         self.logger = LogObject(json=my_json, name=my_name, level=my_level)
-        self.logger.set_handler(self.__resolve_handler())
+        self.logger.set_handler(self.resolve_handler())
         return self.logger
 
 

@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 import argparse
-from decentlog import listen_channel_output
+from decentlog import DweetHttpListener, KafkaListener
 
 
 def _main():
@@ -9,7 +9,7 @@ def _main():
         "--mode",
         type=str,
         default='LISTENER',
-        help="To start program in PUBLISHER or LISTENER mode"
+        help="To start program in PUBLISHER or LISTENER mode",
     )
     parser.add_argument(
         "--no_streaming",
@@ -20,13 +20,27 @@ def _main():
         "--channel",
         type=str,
         help="Channel name where you want log to listen",
-        required=True
+        required=True,
+    )
+    parser.add_argument(
+        "--settings_file",
+        type=str,
+        help="Settings file that will be used for initial loggind setup",
+        default="dev_settings.py",
     )
 
+    parser.add_argument(
+        "--listener-type",
+        type=str,
+        help="",
+        choices=["kafka", "dweet"],
+        default="kafka"
+    )
     args = parser.parse_args()
     assert args.channel, "Channel name should not be empty"
     try:
-        for res in listen_channel_output(args.channel, longpoll=args.no_streaming):
+        listener = KafkaListener()
+        for res in listener.listen_channel_output():
             print(res)
     except KeyboardInterrupt:
         print("Closing .....")

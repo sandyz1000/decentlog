@@ -8,13 +8,8 @@ import http.client
 from .utils import polling
 from kafka.consumer import KafkaConsumer
 from abc import ABCMeta, abstractmethod
-# from .dclogger import SettingsConfigurator
 
 logger = logging.getLogger("__main__")
-
-# base url for all requests
-
-# _SESSION_TYPE = typing.Union[requests.Session, typing.Any]
 _SETTING_TYPE = typing.Dict[typing.AnyStr, typing.Any]
 
 
@@ -31,6 +26,7 @@ class BaseListener(ABCMeta):
             if elapsed.seconds > timeout:
                 raise StopIteration
 
+    @abstractmethod
     def listen_channel_output(self) -> typing.Iterator:
         """ This will be call by client to listen for new message appear in the channel """
         ...
@@ -39,10 +35,10 @@ class BaseListener(ABCMeta):
 class KafkaListener(BaseListener):
     def __init__(self, settings: _SETTING_TYPE):
         super(KafkaListener, self).__init__(settings)
-        self.settings = settings
         if 'KAFKA' not in settings:
             raise AttributeError("Key with named 'KAFKA' not found")
-        kafka_cfg = self.settings['KAFKA']
+        self.settings = settings
+        kafka_cfg = self.settings.get('KAFKA')
         self.consumer = KafkaConsumer(
             kafka_cfg['HOSTS'],
             group_id=kafka_cfg['GROUP_ID'],
@@ -80,15 +76,16 @@ class DweetHttpListener(BaseListener):
         streambuffer = ""
         while not response.closed:
             byte = response.read1()
-            if byte:
-                streambuffer += byte.decode("ascii")
-                try:
-                    dweet = json.loads(streambuffer.splitlines()[1])
-                except (IndexError, ValueError):
-                    continue
-                if isinstance(dweet, str):
-                    yield json.loads(dweet)
-                streambuffer = ""
+            if not byte:
+                continue
+            streambuffer += byte.decode("ascii")
+            try:
+                dweet = json.loads(streambuffer.splitlines()[1])
+            except (IndexError, ValueError):
+                continue
+            if isinstance(dweet, str):
+                yield json.loads(dweet)
+            streambuffer = ""
 
     def poll_dweet_things_from(self) -> typing.Iterator:
         """ Poll dweet API to look for message
@@ -134,7 +131,7 @@ class DweetHttpListener(BaseListener):
                 if reconnect:
                     logger.error("Connection timeout, reconnecting ....")
                     start = datetime.datetime.utcnow()
-                    self.conn = http.client.HTTPSConnection(BASE_URL, timeout=self.timeout)
+                    self.conn = http.client.HTTPSConnection(self.BASE_URL, timeout=self.timeout)
             except Exception as e:
                 raise e
 
